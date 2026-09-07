@@ -2,24 +2,15 @@ pipeline {
     agent any
 
     environment {
-        // AWS & ECR Configuration
-        AWS_ACCOUNT_ID = '123456789012'         // Replace with your 12-digit AWS Account ID
-        AWS_REGION     = 'ap-south-1'            // Asia Pacific (Mumbai)
-        ECR_REPO_NAME  = 'mydockerimages'        // Your ECR repository
-        ECR_REGISTRY   = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-        
-        // Jenkins Credentials ID configured in Manage Jenkins -> Credentials
-        AWS_CRED_ID    = 'aws-ecr-credentials'
-        
-        // Image Tagging
-        IMAGE_TAG      = "${BUILD_NUMBER}"
-        FULL_IMAGE     = "${ECR_REGISTRY}/${ECR_REPO_NAME}"
+        AWS_REGION     = 'ap-south-1'
+        AWS_ACCOUNT_ID = '726695008545' 
+        IMAGE_NAME     = 'mydockerimages'
+        ECR_REPO       = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${IMAGE_NAME}"
     }
 
     stages {
         stage('Checkout') {
             steps {
-                // Pulls source code from SCM repository
                 checkout scm
             }
         }
@@ -27,32 +18,21 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 script {
-                    echo "Building Docker image ${FULL_IMAGE}:${IMAGE_TAG}..."
-                    sh "docker build -t ${FULL_IMAGE}:${IMAGE_TAG} -t ${FULL_IMAGE}:latest ."
+                    echo "Building Docker image ${ECR_REPO}:${BUILD_NUMBER}..."
+                    sh "docker build -t ${ECR_REPO}:${BUILD_NUMBER} -t ${ECR_REPO}:latest ."
                 }
             }
         }
 
-        stage('ECR Login') {
+        stage('ECR Login & Push') {
             steps {
                 script {
-                    echo "Logging into AWS ECR in region ${AWS_REGION}..."
-                    withCredentials([[
-                        $class: 'AmazonWebServicesCredentialsBinding',
-                        credentialsId: AWS_CRED_ID
-                    ]]) {
-                        sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}"
-                    }
-                }
-            }
-        }
-
-        stage('Push Image to ECR') {
-            steps {
-                script {
-                    echo "Pushing images to ECR..."
-                    sh "docker push ${FULL_IMAGE}:${IMAGE_TAG}"
-                    sh "docker push ${FULL_IMAGE}:latest"
+                    echo "Logging into AWS ECR in region ${AWS_REGION} using IAM Role..."
+                    sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+                    
+                    echo "Pushing Docker image to ECR..."
+                    sh "docker push ${ECR_REPO}:${BUILD_NUMBER}"
+                    sh "docker push ${ECR_REPO}:latest"
                 }
             }
         }
@@ -60,11 +40,11 @@ pipeline {
 
     post {
         always {
-            echo "Cleaning up local images from Jenkins agent..."
-            sh "docker rmi -f ${FULL_IMAGE}:${IMAGE_TAG} ${FULL_IMAGE}:latest || true"
+            echo "Cleaning up local images..."
+            sh "docker rmi -f ${ECR_REPO}:${BUILD_NUMBER} ${ECR_REPO}:latest || true"
         }
         success {
-            echo "Successfully built and pushed ${FULL_IMAGE}:${IMAGE_TAG} to AWS ECR!"
+            echo "Pipeline executed successfully!"
         }
         failure {
             echo "Pipeline execution failed. Please check build logs."
