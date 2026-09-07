@@ -1,13 +1,11 @@
 pipeline {
     agent any
-
     environment {
         AWS_REGION     = 'ap-south-1'
         AWS_ACCOUNT_ID = '726695008545' 
         IMAGE_NAME     = 'mydockerimages'
         ECR_REPO       = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${IMAGE_NAME}"
     }
-
     stages {
         stage('Checkout') {
             steps {
@@ -20,6 +18,19 @@ pipeline {
                 script {
                     echo "Building Docker image ${ECR_REPO}:${BUILD_NUMBER}..."
                     sh "docker build -t ${ECR_REPO}:${BUILD_NUMBER} -t ${ECR_REPO}:latest ."
+                }
+            }
+        }
+
+        // NEW STAGE — inserted here, between Build and Push
+        stage('Test Image') {
+            steps {
+                script {
+                    echo "Running container to verify it starts and serves correctly..."
+                    sh "docker run -d --name test-container-${BUILD_NUMBER} -p 8081:80 ${ECR_REPO}:${BUILD_NUMBER}"
+                    sh "sleep 3"
+                    sh "curl -f http://localhost:8081 || (docker logs test-container-${BUILD_NUMBER} && exit 1)"
+                    sh "docker stop test-container-${BUILD_NUMBER} && docker rm test-container-${BUILD_NUMBER}"
                 }
             }
         }
@@ -37,11 +48,11 @@ pipeline {
             }
         }
     }
-
     post {
         always {
             echo "Cleaning up local images..."
             sh "docker rmi -f ${ECR_REPO}:${BUILD_NUMBER} ${ECR_REPO}:latest || true"
+            sh "docker rm -f test-container-${BUILD_NUMBER} || true"
         }
         success {
             echo "Pipeline executed successfully!"
